@@ -10,7 +10,7 @@ wallpaper, with sliders for wallpaper opacity, interface transparency, blur, and
 
 ```sh
 # from this repository
-dsh plugin --profile <profile> add github:notEatingOranges/oranges-dsh-skin
+dsh plugin --profile <profile> add github:notEatingOranges/-oranges-dsh-skin
 ```
 
 Or in the app: **Plugins → Add plugin**, and pick the checkout directory. Restart once if the
