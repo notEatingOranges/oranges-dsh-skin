@@ -42,12 +42,22 @@ appears. Close the dialog to hand dragging back to the composer.
 ## How it paints
 
 A plugin-owned stylesheet paints the wallpaper on `body::before` behind the interface, and the
-**Interface transparency** slider rewrites four surface tokens on `body`
-(`--dsw-alias-bg-base`, `--dsw-alias-bg-layer-1`, `--dsw-alias-bg-layer-2`,
-`--dsw-specific-sidebar-fill`) as `color-mix(..., transparent)`. Menus and dialogs keep their
-shipped material. The slider starts at 40% so a freshly applied skin is visible; 0% restores the
-shipped solid surfaces. Disabling the bundle removes the stylesheet, the tokens, and the
-stylesheet's variables.
+**Interface transparency** slider rewrites surface tokens on `body` as
+`color-mix(..., transparent)`, in two tiers:
+
+- **structural** — `--dsw-alias-bg-base`, `--dsw-specific-sidebar-fill`,
+  `--dsw-specific-input-major`: the page, the sidebar and the composer, at the slider's full
+  strength.
+- **card** — `--dsw-alias-bg-layer-1`, `--dsw-alias-bg-layer-2`, `--dsw-alias-bg-layer-3`:
+  message bubbles, tool cards, panels and diff surfaces, at 60% of it, so text keeps a surface.
+
+Menus and dialogs keep their shipped material. The slider starts at 40% so a freshly applied skin
+is visible; 0% restores the shipped solid surfaces.
+
+Panels that paint a hard-coded colour are handled by the **Overall tint** layer: a click-through
+veil over the whole frame whose colour is the wallpaper's average colour and whose opacity is
+that slider (0–12%, default 4%). It does not make those panels transparent — it pulls them into
+the same palette so the interface stops looking patched together.
 
 Drag events are captured on `window` in the capture phase while the dialog is open, because the
 composer's drop mask (`.mask`, z-index 1000) activates on the first file `dragenter` that reaches
@@ -55,8 +65,8 @@ the document and would cover the dialog.
 
 ## Known limits
 
-- Surfaces painted by a hard-coded colour rather than a token keep their own background, so a few
-  regions can stay opaque.
+- A surface whose token is only declared on the panel itself (not inherited from `body` or `html`)
+  keeps its own background; only the tint layer touches it.
 - The transparency slider stops at 85% removal so text keeps a surface to sit on.
 - After a light/dark switch the captured base colours are re-read from the live theme; a surface
   restored to fully opaque immediately after such a switch can keep the previous theme's base

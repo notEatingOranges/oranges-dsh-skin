@@ -19,22 +19,34 @@ window.__ModuleLoader__.load({
     const PREFS_KEY = 'oranges-dsh-skin.prefs'
     const MAX_BYTES = 40 * 1024 * 1024
     const MAX_EDGE = 2560
-    /** Surfaces that become translucent so the wallpaper shows through. */
-    const SURFACE_TOKENS = [
-      '--dsw-alias-bg-base',
-      '--dsw-alias-bg-layer-1',
-      '--dsw-alias-bg-layer-2',
-      '--dsw-specific-sidebar-fill',
-    ]
+    /** Surfaces that become translucent so the wallpaper shows through, in two tiers. */
+    const SURFACE_TIERS = {
+      /** Page, sidebar and composer sit closest to the wallpaper. */
+      structural: [
+        '--dsw-alias-bg-base',
+        '--dsw-specific-sidebar-fill',
+        '--dsw-specific-input-major',
+      ],
+      /** Cards, panels and diff surfaces only hint at it, so text keeps a surface. */
+      card: [
+        '--dsw-alias-bg-layer-1',
+        '--dsw-alias-bg-layer-2',
+        '--dsw-alias-bg-layer-3',
+      ],
+    }
+    const ALL_SURFACE_TOKENS = [...SURFACE_TIERS.structural, ...SURFACE_TIERS.card]
+    /** Cards react to the transparency slider at this fraction of the structural strength. */
+    const CARD_FACTOR = 0.6
     /** Cap on how much of a surface the transparency slider may remove. */
     const SURFACE_FLOOR = 0.85
-    const DEFAULT_PREFS = { imageOpacity: 60, surfaceTransparency: 40, blur: 0, dim: 0 }
+    const DEFAULT_PREFS = { imageOpacity: 60, surfaceTransparency: 40, tintStrength: 4, blur: 0, dim: 0 }
 
     const CSS = [
       'html.odsk-on body::before{content:"";position:fixed;inset:-16px;z-index:-1;pointer-events:none;',
       'background-image:linear-gradient(rgba(0,0,0,var(--odsk-dim,0)),rgba(0,0,0,var(--odsk-dim,0))),var(--odsk-wallpaper,none);',
       'background-position:center;background-size:cover;background-repeat:no-repeat;',
       'opacity:var(--odsk-opacity,1);filter:blur(var(--odsk-blur,0px));}',
+      '.odsk-tint{position:fixed;inset:0;z-index:1100;pointer-events:none;}',
       '.odsk-layer{position:relative;display:flex;align-items:center;width:100%;height:42px;margin:8px 0 0;}',
       '.odsk-footer{display:flex;align-items:center;width:100%;}',
       '.odsk-trigger{display:inline-flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;margin:0 -2px;',
@@ -45,8 +57,7 @@ window.__ModuleLoader__.load({
       '.odsk-trigger-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
       '.odsk-layer.odsk-rail{width:36px;height:36px;margin:0;}',
       '.odsk-rail .odsk-trigger{justify-content:center;gap:0;width:36px;height:36px;padding:0;border-radius:50%;corner-shape:round;}',
-      '.odsk-backdrop{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;left:0;z-index:1200;',
-      'display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.45);}',
+      '.odsk-backdrop{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;left:0;z-index:1200;',      'display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.45);}',
       '.odsk-dialog{position:relative;display:flex;flex-direction:column;width:100%;max-width:560px;',
       'max-height:min(720px,calc(100vh - 96px));border-radius:16px;overflow:hidden;',
       'background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-1));backdrop-filter:var(--dsw-menu-backdrop-filter,none);',
@@ -88,6 +99,7 @@ window.__ModuleLoader__.load({
       'drop.sub': 'or click to choose a file, or paste from the clipboard',
       'field.wallpaper': 'Wallpaper opacity',
       'field.surface': 'Interface transparency',
+      'field.tint': 'Overall tint',
       'field.blur': 'Wallpaper blur',
       'field.dim': 'Wallpaper dimming',
       'value.percent': '{value}%',
@@ -109,6 +121,7 @@ window.__ModuleLoader__.load({
       'drop.sub': '也可以点击选择文件，或直接粘贴剪贴板里的图片',
       'field.wallpaper': '壁纸不透明度',
       'field.surface': '界面透明度',
+      'field.tint': '整体色调强度',
       'field.blur': '壁纸模糊',
       'field.dim': '壁纸压暗',
       'value.percent': '{value}%',
@@ -143,7 +156,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const emptyApplied = () => ({ url: null, blob: null, ...DEFAULT_PREFS })
+    const emptyApplied = () => ({ url: null, blob: null, tint: null, ...DEFAULT_PREFS })
 
     const store = createStore({ open: false, applied: emptyApplied(), preview: null })
 
@@ -158,8 +171,10 @@ window.__ModuleLoader__.load({
 
       function capture() {
         const computed = getComputedStyle(body)
-        for (const token of SURFACE_TOKENS) {
-          const raw = computed.getPropertyValue(token).trim()
+        const rootComputed = getComputedStyle(root)
+        for (const token of ALL_SURFACE_TOKENS) {
+          let raw = computed.getPropertyValue(token).trim()
+          if (raw === '') raw = rootComputed.getPropertyValue(token).trim()
           if (raw !== '') bases.set(token, raw)
           else if (token === '--dsw-alias-bg-base' && computed.backgroundColor !== '') {
             bases.set(token, computed.backgroundColor)
@@ -177,15 +192,20 @@ window.__ModuleLoader__.load({
 
       function paintSurfaces(transparency) {
         if (transparency <= 0) { releaseSurfaces(); return }
-        const mix = Math.round(100 - transparency * SURFACE_FLOOR)
-        for (const [token, base] of bases) {
-          if (!overridden.has(token)) {
-            overridden.set(token, {
-              value: body.style.getPropertyValue(token),
-              priority: body.style.getPropertyPriority(token),
-            })
+        for (const [tier, tokens] of Object.entries(SURFACE_TIERS)) {
+          const strength = transparency * (tier === 'card' ? CARD_FACTOR : 1)
+          const mix = Math.round(100 - strength * SURFACE_FLOOR)
+          for (const token of tokens) {
+            const base = bases.get(token)
+            if (base === undefined) continue
+            if (!overridden.has(token)) {
+              overridden.set(token, {
+                value: body.style.getPropertyValue(token),
+                priority: body.style.getPropertyPriority(token),
+              })
+            }
+            body.style.setProperty(token, `color-mix(in srgb, ${base} ${mix}%, transparent)`, 'important')
           }
-          body.style.setProperty(token, `color-mix(in srgb, ${base} ${mix}%, transparent)`, 'important')
         }
       }
 
@@ -282,6 +302,7 @@ window.__ModuleLoader__.load({
         return {
           imageOpacity: clamp(parsed.imageOpacity, 0, 100) ?? DEFAULT_PREFS.imageOpacity,
           surfaceTransparency: clamp(parsed.surfaceTransparency, 0, 100) ?? DEFAULT_PREFS.surfaceTransparency,
+          tintStrength: clamp(parsed.tintStrength, 0, 12) ?? DEFAULT_PREFS.tintStrength,
           blur: clamp(parsed.blur, 0, 40) ?? DEFAULT_PREFS.blur,
           dim: clamp(parsed.dim, 0, 80) ?? DEFAULT_PREFS.dim,
         }
@@ -295,6 +316,7 @@ window.__ModuleLoader__.load({
         window.localStorage.setItem(PREFS_KEY, JSON.stringify({
           imageOpacity: prefs.imageOpacity,
           surfaceTransparency: prefs.surfaceTransparency,
+          tintStrength: prefs.tintStrength,
           blur: prefs.blur,
           dim: prefs.dim,
         }))
@@ -328,6 +350,41 @@ window.__ModuleLoader__.load({
         return encoded ?? file
       } finally {
         if (typeof bitmap.close === 'function') bitmap.close()
+      }
+    }
+
+    /** Average the image down to one colour, so the tint layer follows the wallpaper. */
+    async function sampleTint(blob) {
+      if (typeof createImageBitmap !== 'function') return null
+      try {
+        const bitmap = await createImageBitmap(blob)
+        try {
+          const size = 8
+          const canvas = document.createElement('canvas')
+          canvas.width = size
+          canvas.height = size
+          const context = canvas.getContext('2d')
+          if (context === null) return null
+          context.drawImage(bitmap, 0, 0, size, size)
+          const { data } = context.getImageData(0, 0, size, size)
+          let r = 0
+          let g = 0
+          let b = 0
+          let count = 0
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 8) continue
+            r += data[i]
+            g += data[i + 1]
+            b += data[i + 2]
+            count += 1
+          }
+          if (count === 0) return null
+          return [Math.round(r / count), Math.round(g / count), Math.round(b / count)]
+        } finally {
+          if (typeof bitmap.close === 'function') bitmap.close()
+        }
+      } catch {
+        return null
       }
     }
 
@@ -381,6 +438,22 @@ window.__ModuleLoader__.load({
       return h(SkinForm, props)
     }
 
+    /**
+     * Frame-wide tint: one thin veil over everything the interface does not make
+     * translucent, so panels that paint their own solid colour still belong to the skin.
+     */
+    function SkinTint({ useSkin }) {
+      const view = useSkin((state) => state.preview ?? state.applied)
+      if (view.url === null || view.tint === null || view.tint === undefined) return null
+      if (view.tintStrength <= 0) return null
+      const [r, g, b] = view.tint
+      return h('div', {
+        className: 'odsk-tint',
+        'aria-hidden': true,
+        style: { background: `rgb(${r}, ${g}, ${b})`, opacity: view.tintStrength / 100 },
+      })
+    }
+
     function Slider({ label, value, min, max, step, onChange, t }) {
       return h('div', { className: 'odsk-field' },
         h('span', { className: 'odsk-field-label' }, label),
@@ -397,8 +470,10 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState(() => ({
         url: applied.url,
         blob: null,
+        tint: applied.tint,
         imageOpacity: applied.imageOpacity,
         surfaceTransparency: applied.surfaceTransparency,
+        tintStrength: applied.tintStrength,
         blur: applied.blur,
         dim: applied.dim,
       }))
@@ -422,11 +497,12 @@ window.__ModuleLoader__.load({
         if (file.size > MAX_BYTES) { setError(t('error.tooLarge')); return }
         try {
           const blob = await shrink(file)
+          const tint = await sampleTint(blob)
           const url = URL.createObjectURL(blob)
           const stale = draftRef.current.url
           if (stale !== null && stale !== committedUrl.current) URL.revokeObjectURL(stale)
           setError(null)
-          patch({ url, blob })
+          patch({ url, blob, tint })
         } catch {
           setError(t('error.decode'))
         }
@@ -598,6 +674,10 @@ window.__ModuleLoader__.load({
           onChange: (value) => { patch({ surfaceTransparency: value }) },
         }),
         h(Slider, {
+          label: t('field.tint'), value: draft.tintStrength, min: 0, max: 12, step: 1, t,
+          onChange: (value) => { patch({ tintStrength: value }) },
+        }),
+        h(Slider, {
           label: t('field.blur'), value: draft.blur, min: 0, max: 40, step: 1, t,
           onChange: (value) => { patch({ blur: value }) },
         }),
@@ -661,9 +741,11 @@ window.__ModuleLoader__.load({
             const blob = await readWallpaper()
             if (cancelled || blob === null) return
             const prefs = readPrefs()
+            const tint = await sampleTint(blob)
+            if (cancelled) return
             store.set((state) => ({
               ...state,
-              applied: { url: URL.createObjectURL(blob), blob, ...prefs },
+              applied: { url: URL.createObjectURL(blob), blob, tint, ...prefs },
             }))
           } catch {
             // A browser without IndexedDB simply starts without a wallpaper.
@@ -685,7 +767,8 @@ window.__ModuleLoader__.load({
         close: () => { store.set((state) => ({ ...state, open: false, preview: null })) },
         preview: (draft) => { store.set((state) => ({ ...state, preview: draft })) },
         apply: async (draft) => {
-          const previous = store.getSnapshot().applied.blob
+          const previousBlob = store.getSnapshot().applied.blob
+          const previousTint = store.getSnapshot().applied.tint
           if (draft.url === null) {
             await deleteWallpaper()
             clearPrefs()
@@ -700,9 +783,11 @@ window.__ModuleLoader__.load({
             preview: null,
             applied: {
               url: draft.url,
-              blob: draft.blob ?? previous,
+              blob: draft.blob ?? previousBlob,
+              tint: draft.tint ?? previousTint,
               imageOpacity: draft.imageOpacity,
               surfaceTransparency: draft.surfaceTransparency,
+              tintStrength: draft.tintStrength,
               blur: draft.blur,
               dim: draft.dim,
             },
@@ -734,6 +819,13 @@ window.__ModuleLoader__.load({
         locale: NS,
         inject: () => face,
       }, SkinDialog))
+
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay',
+        id: 'oranges-dsh-skin.tint',
+        order: 150,
+        inject: () => face,
+      }, SkinTint))
     }
 
     return { inject, apply }
