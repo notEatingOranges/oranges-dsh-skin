@@ -1,9 +1,30 @@
 {
-  "name": "@local/oranges-dsh-skin",
+  "name": "oranges-dsh-skin",
   "version": "1.0.0",
-  "private": true,
-  "description": "Wallpaper skin for the DSH web client: a sidebar button opens a dialog where a dropped image repaints the interface, with adjustable wallpaper opacity and surface transparency.",
+  "description": "Wallpaper skin for the DeepSeek Harness web client: drop an image in the sidebar dialog to repaint the interface, with adjustable wallpaper opacity and surface transparency.",
   "type": "module",
+  "license": "MIT",
+  "author": "smallleap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notEatingOranges/oranges-dsh-skin.git"
+  },
+  "homepage": "https://github.com/notEatingOranges/oranges-dsh-skin#readme",
+  "bugs": {
+    "url": "https://github.com/notEatingOranges/oranges-dsh-skin/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "wallpaper",
+    "skin",
+    "theme",
+    "ui"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.0"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,7 +38,8 @@
     "locale/*.json",
     "docs",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {

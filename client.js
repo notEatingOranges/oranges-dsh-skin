@@ -7,7 +7,7 @@
  * every trace of it.
  */
 window.__ModuleLoader__.load({
-  id: '@local/oranges-dsh-skin',
+  id: 'oranges-dsh-skin',
   factory(require) {
     const React = require('react')
     const h = React.createElement
