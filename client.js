@@ -19,27 +19,54 @@ window.__ModuleLoader__.load({
     const PREFS_KEY = 'oranges-dsh-skin.prefs'
     const MAX_BYTES = 40 * 1024 * 1024
     const MAX_EDGE = 2560
-    /** Surfaces that become translucent so the wallpaper shows through, in two tiers. */
+    /** Surfaces the skin rewrites, in tiers that carry different budgets. */
     const SURFACE_TIERS = {
-      /** Page, sidebar and composer sit closest to the wallpaper. */
-      structural: [
+      /** Page background and the left column. */
+      page: [
         '--dsw-alias-bg-base',
         '--dsw-specific-sidebar-fill',
+      ],
+      /** The composer holds text and a caret, so it keeps a firmer surface. */
+      composer: [
         '--dsw-specific-input-major',
       ],
-      /** Cards, panels and diff surfaces only hint at it, so text keeps a surface. */
+      /** Cards, panels, diff surfaces and plugin windows: a hint only. */
       card: [
         '--dsw-alias-bg-layer-1',
         '--dsw-alias-bg-layer-2',
         '--dsw-alias-bg-layer-3',
       ],
     }
-    const ALL_SURFACE_TOKENS = [...SURFACE_TIERS.structural, ...SURFACE_TIERS.card]
-    /** Cards react to the transparency slider at this fraction of the structural strength. */
-    const CARD_FACTOR = 0.6
+    const ALL_SURFACE_TOKENS = [
+      ...SURFACE_TIERS.page,
+      ...SURFACE_TIERS.composer,
+      ...SURFACE_TIERS.card,
+    ]
+    /**
+     * Transparent mode caps: how much of a surface the slider may ever remove.
+     * Cards and the composer are capped hard, because that is where text lives.
+     */
+    const TIER_CAPS = { page: 55, composer: 30, card: 12 }
+    /**
+     * Blend mode shares: how much of the wallpaper's own colour a surface takes.
+     * Surfaces stay opaque, so nothing shows through and text keeps its contrast.
+     */
+    const TIER_BLEND = { page: 0.34, composer: 0.22, card: 0.17 }
     /** Cap on how much of a surface the transparency slider may remove. */
     const SURFACE_FLOOR = 0.85
-    const DEFAULT_PREFS = { imageOpacity: 60, surfaceTransparency: 40, tintStrength: 4, blur: 0, dim: 0 }
+    /**
+     * Motion behind translucent surfaces is what makes text hard to read, so the
+     * wallpaper blurs itself as the slider rises.
+     */
+    const AUTO_BLUR_PER_STEP = 5
+    const DEFAULT_PREFS = {
+      imageOpacity: 60,
+      surfaceMode: 'blend',
+      surfaceTransparency: 60,
+      tintStrength: 4,
+      blur: 0,
+      dim: 0,
+    }
 
     const CSS = [
       'html.odsk-on body::before{content:"";position:fixed;inset:-16px;z-index:-1;pointer-events:none;',
@@ -47,6 +74,9 @@ window.__ModuleLoader__.load({
       'background-position:center;background-size:cover;background-repeat:no-repeat;',
       'opacity:var(--odsk-opacity,1);filter:blur(var(--odsk-blur,0px));}',
       '.odsk-tint{position:fixed;inset:0;z-index:1100;pointer-events:none;}',
+      'html.odsk-on [role="dialog"]:not(.odsk-dialog), html.odsk-on [aria-modal="true"]:not(.odsk-backdrop){',
+      'background-color:color-mix(in srgb,var(--odsk-base,#ffffff) 96%,transparent)!important;',
+      'backdrop-filter:blur(20px);}',
       '.odsk-layer{position:relative;display:flex;align-items:center;width:100%;height:42px;margin:8px 0 0;}',
       '.odsk-footer{display:flex;align-items:center;width:100%;}',
       '.odsk-trigger{display:inline-flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;margin:0 -2px;',
@@ -76,6 +106,11 @@ window.__ModuleLoader__.load({
       '.odsk-drop-hint{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);}',
       '.odsk-drop-sub{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption);}',
       '.odsk-field{display:grid;grid-template-columns:1fr auto;row-gap:6px;column-gap:12px;align-items:center;}',
+      '.odsk-modes{display:flex;gap:6px;padding:2px;border:0.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,0.4));border-radius:9px;}',
+      '.odsk-mode{flex:1;height:28px;border:none;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);',
+      'font:inherit;font-size:12px;line-height:18px;cursor:pointer;}',
+      '.odsk-mode[aria-pressed="true"]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);}',
+      '.odsk-mode-hint{margin-top:-8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption);}',
       '.odsk-field-label{font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary);}',
       '.odsk-field-value{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;}',
       '.odsk-field input{grid-column:1 / -1;width:100%;margin:0;accent-color:var(--dsw-alias-state-business-primary,#4176e6);}',
@@ -99,6 +134,12 @@ window.__ModuleLoader__.load({
       'drop.sub': 'or click to choose a file, or paste from the clipboard',
       'field.wallpaper': 'Wallpaper opacity',
       'field.surface': 'Interface transparency',
+      'field.blend': 'Skin strength',
+      'field.mode': 'Surface treatment',
+      'mode.blend': 'Blend',
+      'mode.transparent': 'Show through',
+      'mode.blendHint': 'Surfaces stay solid and take the wallpaper colour, so text and dialogs keep full contrast.',
+      'mode.transparentHint': 'Surfaces turn see-through; the wallpaper blurs as the slider rises so text stays readable.',
       'field.tint': 'Overall tint',
       'field.blur': 'Wallpaper blur',
       'field.dim': 'Wallpaper dimming',
@@ -121,6 +162,12 @@ window.__ModuleLoader__.load({
       'drop.sub': '也可以点击选择文件，或直接粘贴剪贴板里的图片',
       'field.wallpaper': '壁纸不透明度',
       'field.surface': '界面透明度',
+      'field.blend': '皮肤强度',
+      'field.mode': '表面处理',
+      'mode.blend': '融合',
+      'mode.transparent': '透出',
+      'mode.blendHint': '表面保持实心，只吃进壁纸的颜色；弹窗和文字的对比度不受影响。',
+      'mode.transparentHint': '表面变半透明；滑块越高，壁纸自动越模糊，保证文字可读。',
       'field.tint': '整体色调强度',
       'field.blur': '壁纸模糊',
       'field.dim': '壁纸压暗',
@@ -190,21 +237,39 @@ window.__ModuleLoader__.load({
         overridden.clear()
       }
 
-      function paintSurfaces(transparency) {
-        if (transparency <= 0) { releaseSurfaces(); return }
+      function applyToken(token, value) {
+        if (!overridden.has(token)) {
+          overridden.set(token, {
+            value: body.style.getPropertyValue(token),
+            priority: body.style.getPropertyPriority(token),
+          })
+        }
+        body.style.setProperty(token, value, 'important')
+      }
+
+      function paintSurfaces(view) {
+        const strength = view.surfaceTransparency
+        if (strength <= 0) { releaseSurfaces(); return }
+        const tint = view.tint
         for (const [tier, tokens] of Object.entries(SURFACE_TIERS)) {
-          const strength = transparency * (tier === 'card' ? CARD_FACTOR : 1)
-          const mix = Math.round(100 - strength * SURFACE_FLOOR)
+          if (view.surfaceMode === 'blend' && tint !== null && tint !== undefined) {
+            // Opaque surface that has taken on the wallpaper's colour: nothing bleeds through.
+            const share = Math.round(strength * TIER_BLEND[tier])
+            if (share <= 0) continue
+            const colour = `rgb(${tint[0]}, ${tint[1]}, ${tint[2]})`
+            for (const token of tokens) {
+              const base = bases.get(token)
+              if (base === undefined) continue
+              applyToken(token, `color-mix(in srgb, ${colour} ${share}%, ${base})`)
+            }
+            continue
+          }
+          const capped = Math.min(strength, TIER_CAPS[tier])
+          const mix = Math.round(100 - capped * SURFACE_FLOOR)
           for (const token of tokens) {
             const base = bases.get(token)
             if (base === undefined) continue
-            if (!overridden.has(token)) {
-              overridden.set(token, {
-                value: body.style.getPropertyValue(token),
-                priority: body.style.getPropertyPriority(token),
-              })
-            }
-            body.style.setProperty(token, `color-mix(in srgb, ${base} ${mix}%, transparent)`, 'important')
+            applyToken(token, `color-mix(in srgb, ${base} ${mix}%, transparent)`)
           }
         }
       }
@@ -212,7 +277,7 @@ window.__ModuleLoader__.load({
       function clearAll() {
         releaseSurfaces()
         root.classList.remove('odsk-on')
-        for (const name of ['--odsk-wallpaper', '--odsk-opacity', '--odsk-blur', '--odsk-dim']) {
+        for (const name of ['--odsk-wallpaper', '--odsk-opacity', '--odsk-blur', '--odsk-dim', '--odsk-base']) {
           root.style.removeProperty(name)
         }
       }
@@ -225,10 +290,16 @@ window.__ModuleLoader__.load({
         capture()
         root.style.setProperty('--odsk-wallpaper', `url("${view.url}")`)
         root.style.setProperty('--odsk-opacity', String(view.imageOpacity / 100))
-        root.style.setProperty('--odsk-blur', `${view.blur}px`)
+        // Transparency without blur lets the wallpaper's detail fight the interface text.
+        const autoBlur = view.surfaceMode === 'transparent'
+          ? Math.round(view.surfaceTransparency / AUTO_BLUR_PER_STEP)
+          : 0
+        root.style.setProperty('--odsk-blur', `${Math.max(view.blur, autoBlur)}px`)
         root.style.setProperty('--odsk-dim', String(view.dim / 100))
+        const baseColour = bases.get('--dsw-alias-bg-base')
+        if (baseColour !== undefined) root.style.setProperty('--odsk-base', baseColour)
         root.classList.add('odsk-on')
-        paintSurfaces(view.surfaceTransparency)
+        paintSurfaces(view)
       }
 
       function dispose() {
@@ -301,6 +372,7 @@ window.__ModuleLoader__.load({
           : null)
         return {
           imageOpacity: clamp(parsed.imageOpacity, 0, 100) ?? DEFAULT_PREFS.imageOpacity,
+          surfaceMode: parsed.surfaceMode === 'transparent' ? 'transparent' : 'blend',
           surfaceTransparency: clamp(parsed.surfaceTransparency, 0, 100) ?? DEFAULT_PREFS.surfaceTransparency,
           tintStrength: clamp(parsed.tintStrength, 0, 12) ?? DEFAULT_PREFS.tintStrength,
           blur: clamp(parsed.blur, 0, 40) ?? DEFAULT_PREFS.blur,
@@ -315,6 +387,7 @@ window.__ModuleLoader__.load({
       try {
         window.localStorage.setItem(PREFS_KEY, JSON.stringify({
           imageOpacity: prefs.imageOpacity,
+          surfaceMode: prefs.surfaceMode,
           surfaceTransparency: prefs.surfaceTransparency,
           tintStrength: prefs.tintStrength,
           blur: prefs.blur,
@@ -472,6 +545,7 @@ window.__ModuleLoader__.load({
         blob: null,
         tint: applied.tint,
         imageOpacity: applied.imageOpacity,
+        surfaceMode: applied.surfaceMode,
         surfaceTransparency: applied.surfaceTransparency,
         tintStrength: applied.tintStrength,
         blur: applied.blur,
@@ -669,8 +743,24 @@ window.__ModuleLoader__.load({
           label: t('field.wallpaper'), value: draft.imageOpacity, min: 0, max: 100, step: 1, t,
           onChange: (value) => { patch({ imageOpacity: value }) },
         }),
+        h('div', { className: 'odsk-modes', role: 'group', 'aria-label': t('field.mode') },
+          h('button', {
+            type: 'button',
+            className: 'odsk-mode',
+            'aria-pressed': draft.surfaceMode === 'blend' ? 'true' : 'false',
+            onClick: () => { patch({ surfaceMode: 'blend' }) },
+          }, t('mode.blend')),
+          h('button', {
+            type: 'button',
+            className: 'odsk-mode',
+            'aria-pressed': draft.surfaceMode === 'transparent' ? 'true' : 'false',
+            onClick: () => { patch({ surfaceMode: 'transparent' }) },
+          }, t('mode.transparent'))),
+        h('span', { className: 'odsk-mode-hint' },
+          t(draft.surfaceMode === 'blend' ? 'mode.blendHint' : 'mode.transparentHint')),
         h(Slider, {
-          label: t('field.surface'), value: draft.surfaceTransparency, min: 0, max: 100, step: 1, t,
+          label: t(draft.surfaceMode === 'blend' ? 'field.blend' : 'field.surface'),
+          value: draft.surfaceTransparency, min: 0, max: 100, step: 1, t,
           onChange: (value) => { patch({ surfaceTransparency: value }) },
         }),
         h(Slider, {

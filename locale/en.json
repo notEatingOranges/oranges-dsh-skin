@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Appearance skin",
-    "description": "Paints a wallpaper behind the interface and lets you make the surfaces translucent. Click Skin at the sidebar foot, drop an image into the dialog, then adjust wallpaper opacity, interface transparency, blur, and dimming. The image is stored in this browser only; the skin disappears when the bundle is disabled.",
+    "description": "Paints a wallpaper behind the interface and lets you make the surfaces blend with it or turn see-through. Click Skin at the sidebar foot, drop an image into the dialog, then choose a surface treatment and adjust wallpaper opacity, skin strength, overall tint, blur, and dimming. The image is stored in this browser only; the skin disappears when the bundle is disabled.",
     "detail": "docs/DETAIL.md"
   }
 }
